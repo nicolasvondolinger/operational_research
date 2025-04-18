@@ -13,25 +13,56 @@ buildings = [
     "Granary",            # Celeiro
     "Barracks",           # Quartel
     "Academy",            # Academia
-    "Smithy",             # Ferreiro
+    "Blacksmith",         # Ferreiro
     "Woodcutter",         # Campo de madeira
     "Clay Pit",           # Campo de barro
     "Iron Mine",          # Campo de ferro
-    "Cropland"            # Campo de cereal
+    "Cropland",           # Campo de cereal
+    "Rally Point"         # Ponto de Encontro 
 ]
 
-resources = ["Wood", "Clay", "Iron", "Crop"] # Tipos de Recursos
+# População gerada por cada construção
+population = Dict{String, Vector{Int}}()
+
+population["Main Building"] = [2, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3]
+
+population["Warehouse"] = [1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+
+population["Granary"] = [1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+
+population["Barracks"] = [1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4]
+
+population["Academy"] = [4, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4]
+
+population["Blacksmith"] = [4, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4]
+
+population["Woodcutter"] = [1, 1, 1, 2, 2, 2, 4, 4, 5, 6, 7, 9, 11, 13, 15, 18, 22, 27, 32, 38]
+
+population["Clay Pit"] = [1, 1, 1, 2, 2, 2, 4, 4, 5, 6, 7, 9, 11, 13, 15, 18, 22, 27, 32, 38]
+
+population["Iron Mine"] = [1, 1, 2, 2, 2, 3, 4, 4, 5, 6, 7, 9, 11, 13, 15, 18, 22, 27, 32, 38]
+
+population["Cropland"] = [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2]
+
+population["Rally Point"] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+
+# Tipos de Recursos
+resources = ["Wood", "Clay", "Iron", "Crop"]
+
+
 
 # Inicialização do dicionário de requisitos de construção
 building_requirements = Dict{String, Dict{String, Int}}()
 
 # Variáveis de decisão
 
+@variable(model, total_population[1:T] >= 0, Int)
+
 # x[s, l, t] binária: se o nível l da construção s foi iniciado no tempo t
 @variable(model, x[eachindex(buildings), 1:20, 1:T], Bin)
 
-# n[s, l, t] inteira: quantidade de níveis l da construção s completos até o tempo t
-@variable(model, n[eachindex(buildings), 1:20, 1:T] >= 0, Int)
+# n[s, l, t] binária: se a construção s tem o nível l completo no tempo t
+@variable(model, n[eachindex(buildings), 1:20, 1:T] >= 0, Bin)
 
 # r[r, t] quantidade de recursos r disponíveis no tempo t
 @variable(model, r[eachindex(resources), 1:T] >= 0, Int)
@@ -45,6 +76,15 @@ building_requirements = Dict{String, Dict{String, Int}}()
 # Recursos iniciais
 for r_i in eachindex(resources)
     @constraint(model, r[r_i, 1] == 750)
+end
+
+for t in 1:T
+    @constraint(model, total_population[t] == sum(
+        n[s, l, t] * population[buildings[s]][l]
+        for s in eachindex(buildings) 
+        for l in 1:20
+        if haskey(population, buildings[s])
+    ))
 end
 
 # Main Building e campos de recurso já construídos no nível 1
@@ -92,7 +132,7 @@ end
 resource_required = Dict()
 
 # Valores de Main Building
-for lvl in 1:19
+for lvl in 1:20
     main_building_costs = [
         70   40   60   20;
         90   50   75   25;
@@ -122,6 +162,7 @@ for lvl in 1:19
         "Crop" => main_building_costs[lvl, 4]
     )
 end
+building_requirements["Main Building"] = Dict()
 
 # Valores de Barracks
 for lvl in 1:20
@@ -154,6 +195,41 @@ for lvl in 1:20
         "Crop" => barracks_costs[lvl, 4]
     )
 end
+building_requirements["Barracks"] = Dict("Main Building" => 3, "Rally Point" => 1)
+
+# Valores de Academy
+for lvl in 1:20
+    academy_costs = [
+        220   160    90    40;
+        280   205   115    50;
+        360   260   145    65;
+        460   335   190    85;
+        590   430   240   105;
+        755   550   310   135;
+        970   705   395   175;
+        1240  900   505   225;
+        1585 1155   650   290;
+        2030 1475   830   370;
+        2595 1890  1065   470;
+        3325 2420  1360   605;
+        4255 3095  1740   775;
+        5445 3960  2230   990;
+        6970 5070  2850  1270;
+        8925 6490  3650  1625;
+        11425 8310 4675  2075;
+        14620 10635 5980 2660;
+        18715 13610 7655 3405;
+        23955 17420 9800 4355
+    ]
+
+    resource_required["Academy", lvl] = Dict(
+        "Wood" => academy_costs[lvl, 1],
+        "Clay" => academy_costs[lvl, 2],
+        "Iron" => academy_costs[lvl, 3],
+        "Crop" => academy_costs[lvl, 4]
+    )
+end
+building_requirements["Academy"] = Dict()
 
 # Valores de Warehouse
 for lvl in 1:20
@@ -186,6 +262,7 @@ for lvl in 1:20
         "Crop" => warehouse_costs[lvl, 4]
     )
 end
+building_requirements["Warehouse"] = Dict()
 
 # Valores de Granary
 for lvl in 1:20
@@ -219,6 +296,7 @@ for lvl in 1:20
         "Upkeep" => granary_costs[lvl, 5]
     )
 end
+building_requirements["Granary"] = Dict()
 
 # Valores de Blacksmith
 for lvl in 1:20
@@ -257,7 +335,7 @@ building_requirements["Blacksmith"] = Dict("Academy" => 3, "Main Building" => 3,
 # Valores de Woodcutter
 for lvl in 1:20
     woodcutter_costs = [
-        40     100    50     60;
+        40     100    50     60;  
         65     165    85    100;
         110    280   140    165;
         185    465   235    280;
@@ -288,29 +366,29 @@ for lvl in 1:20
 end
 building_requirements["Woodcutter"] = Dict()
 
-# Valores para Clay Pit
+# Valores de Clay Pit
 for lvl in 1:20
     clay_pit_costs = [
-        40     100    50     60;
-        65     165    85    100;
-        110    280   140    165;
-        185    465   235    280;
-        310    780   390    465;
-        520   1300   650    780;
-        870   2170  1085   1300;
-        1450  3625  1810   2175;
-        2420  6050  3025   3630;
-        4040 10105  5050   6060;
-        6750 16870  8435  10125;
-        11270 28175 14090 16905;
-        18820 47055 23525 28230;
-        31430 78580 39290 47150;
-        52490 131230 65615 78740;
-        87660 219155 109755 131490;
-        146395 365985 182995 219590;
-        244480 611195 305600 366715;
-        408280 1020695 510350 612420;
-        681825 1704565 852280 1022740
+        80    40    80    50;
+        135   65   135    85;
+        225  110   225   140;
+        375  185   375   235;
+        620  310   620   390;
+        1040 520  1040   650;
+        1735 870  1735  1085;
+        2900 1450 2900  1810;
+        4840 2420 4840  3025;
+        8080 4040 8080  5050;
+        13500 6750 13500 8435;
+        22540 11270 22540 14090;
+        37645 18820 37645 23525;
+        62865 31430 62865 39290;
+        104985 52490 104985 65615;
+        175320 87660 175320 109575;
+        292790 146395 292790 182995;
+        488955 244480 488955 305600;
+        816555 408280 816555 510350;
+        1363650 681825 1363650 852280
     ]
 
     resource_required["Clay Pit", lvl] = Dict(
@@ -322,7 +400,7 @@ for lvl in 1:20
 end
 building_requirements["Clay Pit"] = Dict()
 
-# Valores para Iron Mine
+# Valores de Iron Mine
 for lvl in 1:20
     iron_mine_costs = [
         100     80     30     60;
@@ -356,10 +434,10 @@ for lvl in 1:20
 end
 building_requirements["Iron Mine"] = Dict()
 
-#Valores para Cropland
+#Valores de Cropland
 for lvl in 1:20
     cropland_costs = [
-        70     90     70     20;
+         70    90     70     20;
         115   150    115     35;
         195   250    195     55;
         325   420    325     95;
@@ -390,55 +468,57 @@ for lvl in 1:20
 end
 building_requirements["Cropland"] = Dict()
 
+# Valores de Rally Point
+for lvl in 1:20
+    rally_point_costs = [
+        110   160   90   70;
+        140   205  115   90;
+        180   260  145  115;
+        230   335  190  145;
+        295   430  240  190;
+        380   550  310  240;
+        485   705  395  310;
+        615   900  505  395;
+        790  1155  645  505;
+        1010 1475  830  650;
+        1290 1890 1060  830;
+        1655 2420 1360 1065;
+        2115 3100 1740 1360;
+        2710 3965 2225 1740;
+        3485 5070 2850 2220;
+        4460 6490 3650 2840;
+        5710 8310 4675 3635;
+        7270 10645 5970 4675;
+        9305 13625 7645 5980;
+        11910 17440 9785 7655
+    ]
+
+    resource_required["Rally Point", lvl] = Dict(
+        "Wood" => rally_point_costs[lvl, 1],
+        "Clay" => rally_point_costs[lvl, 2],
+        "Iron" => rally_point_costs[lvl, 3],
+        "Crop" => rally_point_costs[lvl, 4]
+    )
+end
+building_requirements["Rally Point"] = Dict()
+
 # Capacidade de armazenamento padrão
 storage_capacity = Dict("Wood"=>800, "Clay"=>800, "Iron"=>800, "Crop"=>800)
+
+# Custo para treinar um Legionário (Wood, Clay, Iron, Crop)
+soldier_cost = Dict(
+    "Wood" => 120,
+    "Clay" => 100, 
+    "Iron" => 150,
+    "Crop" => 30
+)
 
 # Custos, tempo de treinamento e requisitos das tropas romanas
 soldier_data = Dict(
     "Legionnaire" => Dict(
-        "Cost" => Dict("Wood"=>120, "Clay"=>100, "Iron"=>150, "Crop"=>30),
+        "Cost" => soldier_cost, 
         "TrainingTime" => "n/a",
         "Requirements" => ["Barracks level 1"]
-    ),
-    "Praetorian" => Dict(
-        "Cost" => Dict("Wood"=>700, "Clay"=>620, "Iron"=>1480, "Crop"=>580),
-        "TrainingTime" => "2:20:00",
-        "Requirements" => ["Armory level 1"]
-    ),
-    "Imperian" => Dict(
-        "Cost" => Dict("Wood"=>1000, "Clay"=>740, "Iron"=>1880, "Crop"=>640),
-        "TrainingTime" => "2:30:00",
-        "Requirements" => ["Armory level 1"]
-    ),
-    "Equites Legati" => Dict(
-        "Cost" => Dict("Wood"=>940, "Clay"=>740, "Iron"=>360, "Crop"=>400),
-        "TrainingTime" => "1:55:00",
-        "Requirements" => ["Stable level 1"]
-    ),
-    "Equites Imperatoris" => Dict(
-        "Cost" => Dict("Wood"=>3400, "Clay"=>1860, "Iron"=>2760, "Crop"=>760),
-        "TrainingTime" => "3:15:00",
-        "Requirements" => ["Stable level 5"]
-    ),
-    "Equites Caesaris" => Dict(
-        "Cost" => Dict("Wood"=>3400, "Clay"=>2660, "Iron"=>6600, "Crop"=>1240),
-        "TrainingTime" => "4:10:00",
-        "Requirements" => ["Stable level 10"]
-    ),
-    "Battering Ram" => Dict(
-        "Cost" => Dict("Wood"=>5500, "Clay"=>1540, "Iron"=>4200, "Crop"=>580),
-        "TrainingTime" => "4:20:00",
-        "Requirements" => ["Workshop level 1"]
-    ),
-    "Fire Catapult" => Dict(
-        "Cost" => Dict("Wood"=>5800, "Clay"=>5500, "Iron"=>5000, "Crop"=>700),
-        "TrainingTime" => "8:00:00",
-        "Requirements" => ["Workshop level 10"]
-    ),
-    "Senator" => Dict(
-        "Cost" => Dict("Wood"=>15880, "Clay"=>13800, "Iron"=>36400, "Crop"=>22660),
-        "TrainingTime" => "6:47:55",
-        "Requirements" => ["Rally point level 10"]
     )
 )
 
@@ -459,22 +539,49 @@ for r_i in eachindex(resources), t in 1:T
     @constraint(model, r[r_i, t] <= storage_capacity[resources[r_i]])
 end
 
-# Requisitos de construção (campos de recurso)
-for r in eachindex(resources), t in 1:T
-    @constraint(model, sum(x[s, l, t] * resource_required[buildings[s], l][r] for s in eachindex(buildings), l in 1:20) <= r[r, t])
+# Construções só podem ser feitas atendendo os requisitos
+for s in eachindex(buildings), l in 1:20, t in 1:T
+    for (req_building, req_level) in building_requirements[buildings[s]]
+        req_s = findfirst(==(req_building), buildings)
+        @constraint(model, x[s, l, t] <= sum(n[req_s, req_level, τ] for τ in 1:t-1))
+    end
 end
 
+# Requisitos de construção (campos de recurso)
+for t in 1:T, r_i in eachindex(resources)
+    resource_name = resources[r_i]  # Converte o índice para o nome do recurso ("Wood", "Clay", etc.)
+    @constraint(model, 
+        sum(
+            x[s, l, t] * resource_required[buildings[s], l][resource_name] 
+            for s in eachindex(buildings), l in 1:20
+        ) <= r[r_i, t]
+    )
+end
 # O quartel deve existir antes de treinar soldados
 @constraint(model, sum(x[4, l, t] for l in 1:20, t in 1:T) >= 1)
 
 # Recursos suficientes para treinamento de soldados
-@constraint(model, sum(q_t[t] * soldier_cost[resources[r]] for t in 1:T for r in eachindex(resources)) <= sum(r[r, t] for r in eachindex(resources), t in 1:T))
+@constraint(model, 
+    sum(
+        q_t[t] * soldier_cost[r_name] 
+        for t in 1:T, 
+        r_name in resources
+    ) <= 
+    sum(
+        r[findfirst(==(r_name), resources), t] 
+        for r_name in resources, 
+        t in 1:T
+    )
+)
 
 # Quantidade mínima de soldados
 @constraint(model, q >= 100)
 
+# Cada soldado consome 1 de população
+#@constraint(model, q <= sum(total_population[t] for t in 1:T))
+
 # Função objetivo
-@objective(model, Max, q)
+@objective(model, Max, sum(total_population[t] for t in 1:T))
 
 # Resolver o modelo
 optimize!(model)
@@ -482,6 +589,7 @@ optimize!(model)
 # Exibir resultados
 if termination_status(model) == MOI.OPTIMAL
     println("Solução ótima encontrada!")
+    println("Número total da população: ", sum(total_population[t] for t in 1:T))
     println("Número total de soldados: ", value(q))
 else
     println("Não foi possível encontrar uma solução ótima.")
