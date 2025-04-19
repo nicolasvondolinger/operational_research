@@ -1,12 +1,11 @@
 using JuMP, Gurobi
 
 # Inicialização do modelo
-
 model = Model(Gurobi.Optimizer)
 
-T = 259200  # Horizonte de 72h
+# Parâmetros
 
-levels = 1:20 
+T = 259200  # Horizonte de 72h
 
 buildings = [
     "Main Building",      # Edifício principal
@@ -21,12 +20,7 @@ buildings = [
     "Rally Point"         # Ponto de Encontro 
 ]
 
-resources = ["Wood", "Clay", "Iron", "Crop"]
-
-resource_buildings = ["Woodcutter", "Clay Pit", "Iron Mine", "Cropland"]
-
 # População gerada por cada construção
-
 population = Dict{String, Vector{Int}}()
 
 population["Main Building"] = [2, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3]
@@ -49,6 +43,12 @@ population["Cropland"] = [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 
 
 population["Rally Point"] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
 
+# Tipos de Recursos
+resources = ["Wood", "Clay", "Iron", "Crop"]
+
+# Inicialização do dicionário de requisitos de construção
+building_requirements = Dict{String, Dict{String, Int}}()
+
 # Variáveis de decisão
 
 @variable(model, total_population[1:T] >= 0, Int)
@@ -68,8 +68,17 @@ population["Rally Point"] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 
 # q número total de soldados treinados
 @variable(model, q >= 0, Int)
 
-# Variável de capacidade
-@variable(model, w[r in resources, t in 1:T] >= 0)
+# Limite de 3 construções simultâneas
+@variable(model, active_constructions[1:T] >= 0, Int)
+for t in 1:T
+    @constraint(model, active_constructions[t] <= 3)
+    @constraint(model, active_constructions[t] == sum(
+        x[s,l,τ] 
+        for s in eachindex(buildings), l in 1:20 
+        for τ in max(1, t - building_times[buildings[s]][l] + 1):t
+        if value(x[s,l,τ]) > 0.5
+    ))
+end
 
 # Recursos iniciais
 for r_i in eachindex(resources)
@@ -112,9 +121,6 @@ function building_for_resource(res)
     end
 end
 
-# Custos para cada tipo de construção
-resource_required = Dict()
-
 for t in 2:T, r_i in eachindex(resources)
     resource = resources[r_i]
     @constraint(model,
@@ -135,8 +141,8 @@ end
     r[4, t] >= (total_population[t] + q_t[t]) / 3600  # Consumo por segundo
 )
 
-# Inicialização do dicionário de requisitos de construção
-building_requirements = Dict{String, Dict{String, Int}}()
+# Custos para cada tipo de construção
+resource_required = Dict()
 
 # Custos de Main Building
 for lvl in 1:20
@@ -709,6 +715,9 @@ building_times = Dict(
     for (s, times) in building_base_times
 )
 
+# Capacidade de armazenamento padrão
+storage_capacity = Dict("Wood"=>800, "Clay"=>800, "Iron"=>800, "Crop"=>800)
+
 # Custo para treinar um Legionário (Wood, Clay, Iron, Crop)
 soldier_cost = Dict(
     "Wood" => 120,
@@ -750,7 +759,7 @@ end
 
 # Disponibilidade de recursos (em cada tempo t)
 for r_i in eachindex(resources), t in 1:T
-    @constraint(model, [r in resources, t in 1:T], r[r,t] <= w[r,t])
+    @constraint(model, r[r_i, t] <= storage_capacity[resources[r_i]])
 end
 
 # Construções só podem ser feitas atendendo os requisitos
@@ -775,13 +784,8 @@ end
 # Tempo de construção
 for s in eachindex(buildings), l in 1:20, t in 1:T
     τ_max = min(t + building_times[buildings[s]][l] - 1, T)
-    @constraint(model, [s in buildings, l in levels, t in 1:T],
-    n[s,l,t] >= sum(x[s,l,τ] for τ in 1:t-building_times[s][l] if τ > 0))
+    @constraint(model, n[s,l,τ_max] >= x[s,l,t])
 end
-
-@variable(model, w[r in resources, t in 1:T] >= 0)  # Capacidade de armazenamento
-@constraint(model, [r in resources, t in 1:T],
-    w[r,t] == 800 + 800*(sum(n[findfirst(==("Warehouse")),l,t] for l in 1:20)))
 
 # O quartel deve existir antes de treinar soldados
 @constraint(model, sum(x[4, l, t] for l in 1:20, t in 1:T) >= 1)
@@ -800,54 +804,19 @@ end
     )
 )
 
-# 1. Restrição de completude de construção
-@constraint(model, [s in buildings, l in levels, t in 1:T],
-    n[s,l,t] == sum(x[s,l,τ] for τ in 1:t-building_times[s][l] if τ > 0))
+# Treinamento de soldados
+@constraint(model, [t in 1:T, r_i in eachindex(resources)],
+    (q_t[t] - q_t[t-1]) * soldier_cost[resources[r_i]] <= r[r_i, t-1]
+)
 
-# 2. Hierarquia de níveis
-@constraint(model, [s in buildings, l in 2:20, t in 1:T],
-    sum(x[s,l,τ] for τ in 1:t) <= sum(x[s,l-1,τ] for τ in 1:t))
+# Quantidade mínima de soldados
+@constraint(model, q >= 100)
 
-# 3. Consumo de cereal por segundo
-@constraint(model, [t in 1:T],
-    r["Crop",t] >= sum(n[s,l,t]*population[s][l] for s in buildings, l in levels)/3600)
-
-# Variável auxiliar para soldados sendo treinados
-@variable(model, training_soldiers[1:T] >= 0, Int)
-
-# Restrição de treinamento
-@constraint(model, [t in 1:T, r in resources],
-    q_t[t] * soldier_cost[r] <= r[r,t])
-
-# Restrição mínima de soldados
-@constraint(model, q[T] >= 100)
-
-# Armazém aumenta capacidade para madeira, barro, ferro
-warehouse_idx = findfirst(==("Warehouse"), buildings)
-@constraint(model, [t in 1:T],
-    w["Wood",t] == 800 + 800*sum(n[warehouse_idx,l,t] for l in levels))
-@constraint(model, [t in 1:T],
-    w["Clay",t] == 800 + 800*sum(n[warehouse_idx,l,t] for l in levels)) 
-@constraint(model, [t in 1:T],
-    w["Iron",t] == 800 + 800*sum(n[warehouse_idx,l,t] for l in levels))
-
-# Celeiro aumenta capacidade para cereal
-granary_idx = findfirst(==("Granary"), buildings)
-@constraint(model, [t in 1:T],
-    w["Crop",t] == 800 + 800*sum(n[granary_idx,l,t] for l in levels))
-
-# Limite de 3 construções simultâneas
-for t in 1:T
-    @constraint(model, [t in 1:T],
-    sum(x[s,l,τ] for s in buildings, l in levels, 
-        τ in max(1,t-building_times[s][l]+1):t) <= 3)
-end
+# Cada soldado consome 1 de população
+#@constraint(model, q <= sum(total_population[t] for t in 1:T))
 
 # Função objetivo
-@objective(model, Max, sum(
-    n[s,l,T]*population[s][l] 
-    for s in buildings, l in levels
-))
+@objective(model, Max, sum(total_population[t] for t in 1:T))
 
 # Resolver o modelo
 optimize!(model)
