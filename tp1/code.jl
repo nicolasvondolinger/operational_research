@@ -58,20 +58,23 @@ population["Rally Point"] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 
 @variable(model, n[eachindex(buildings), 1:20, 1:T] >= 0, Bin)
 
 # r[r, t] quantidade de recursos r disponíveis no tempo t
-@variable(model, r[eachindex(resources), 1:T] >= 0, Int)
+@variable(model, r[resources, 1:T] >= 0, Int)
+
+# q número total de soldados treinados
+@variable(model, q >= 0, Int)
 
 # q_t número de soldados treinados até o tempo t
 @variable(model, q_t[1:T] >= 0, Int)
 
-# q número total de soldados treinados
+# Relação entre q e q_t
 @constraint(model, q == sum(q_t[t] for t in 1:T))
 
 # Variável de capacidade
-@variable(model, w[r in resources, t in 1:T] >= 0)
+@variable(model, w[resources, 1:T] >= 0)
 
 # Recursos iniciais
-for r_i in eachindex(resources)
-    @constraint(model, r[r_i, 1] == 750)
+for res in resources
+    @constraint(model, r[res, 1] == 750)
 end
 
 for t in 1:T
@@ -112,19 +115,6 @@ end
 
 # Custos para cada tipo de construção
 resource_required = Dict()
-
-for t in 2:T, r_i in eachindex(resources)
-    if t % 3600 == 0  # Atualização horária
-        @constraint(model, r[r_i,t] == r[r_i,t-1] + produção - gastos)
-    else
-        @constraint(model, r[r_i,t] == r[r_i,t-1] - gastos)
-    end
-end
-
-# Consumo de Crop
-@constraint(model, [t in 1:T],
-    r["Crop", t] >= (total_population[t] + q_t[t]) / 3600  # Consumo por segundo
-)
 
 # Inicialização do dicionário de requisitos de cada construção
 building_requirements = Dict{String, Dict{String, Int}}()
@@ -466,6 +456,35 @@ for lvl in 1:20
 end
 building_requirements["Rally Point"] = Dict()
 
+# Resource production and consumption
+for t in 2:T, res_name in resources  # Iterar diretamente pelos nomes dos recursos
+    building_name = building_for_resource(res_name)
+    s = findfirst(==(building_name), buildings)
+    
+    # Resource production (only from resource buildings)
+    production = if building_name ∈ resource_buildings
+        sum(
+            n[s, l, t-1] * resource_production[building_name][l] / 3600  # Production per second
+            for l in 1:20
+        )
+    else
+        0
+    end
+    
+    # Resource consumption (building costs + soldier training)
+    consumption = sum(
+        x[s_b, l, t] * resource_required[buildings[s_b], l][res_name]
+        for s_b in eachindex(buildings), l in 1:20
+    ) + (res_name == "Crop" ? (total_population[t] + q_t[t]) / 3600 : 0)
+    
+    @constraint(model, r[res_name, t] == r[res_name, t-1] + production - consumption)
+end
+
+# Consumo de Crop - versão correta
+@constraint(model, [t in 1:T],
+    r["Crop", t] >= (total_population[t] + q_t[t]) / 3600
+)
+
 # Tempo necessário para cada construção em cada nível
 
 building_base_times = Dict(
@@ -528,9 +547,7 @@ for s in eachindex(buildings)
 end
 
 # Disponibilidade de recursos (em cada tempo t)
-for r_i in eachindex(resources), t in 1:T
-    @constraint(model, [r in resources, t in 1:T], r[r,t] <= w[r,t])
-end
+@constraint(model, [res in resources, t in 1:T], r[res, t] <= w[res, t])
 
 # Construções só podem ser feitas atendendo os requisitos
 for s in eachindex(buildings), l in 1:20, t in 1:T
@@ -540,22 +557,23 @@ for s in eachindex(buildings), l in 1:20, t in 1:T
     end
 end
 
-# Requisitos de construção (campos de recurso)
-for t in 1:T, r_i in eachindex(resources)
-    resource_name = resources[r_i]  # Converte o índice para o nome do recurso ("Wood", "Clay", etc.)
+# Requisitos de construção (campos de recurso) 
+for t in 1:T, resource_name in resources  # Itera diretamente pelos nomes dos recursos
     @constraint(model, 
         sum(
             x[s, l, t] * resource_required[buildings[s], l][resource_name] 
             for s in eachindex(buildings), l in 1:20
-        ) <= r[r_i, t]
+        ) <= r[resource_name, t]  # Acessa usando o nome do recurso diretamente
     )
 end
 
-# Tempo de construção
+# Tempo de construção - versão corrigida
 for s in eachindex(buildings), l in 1:20, t in 1:T
-    τ_max = min(t + building_times[buildings[s]][l] - 1, T)
-    @constraint(model, [s in buildings, l in levels, t in 1:T],
-    n[s,l,t] >= sum(x[s,l,τ] for τ in 1:t-building_times[s][l] if τ > 0))
+    # Converta o tempo para Int antes de usar como índice
+    build_time = Int(ceil(building_times[buildings[s]][l]))
+    @constraint(model, 
+        n[s,l,t] >= sum(x[s,l,τ] for τ in 1:t-build_time if τ > 0)
+    )
 end
 
 # O quartel deve existir antes de treinar soldados
@@ -569,30 +587,33 @@ end
         r_name in resources
     ) <= 
     sum(
-        r[findfirst(==(r_name), resources), t] 
+        r[r_name, t]  # Acessa diretamente pelo nome do recurso
         for r_name in resources, 
         t in 1:T
     )
 )
 
 # 1. Restrição de completude de construção
-@constraint(model, [s in buildings, l in levels, t in 1:T],
-    n[s,l,t] == sum(x[s,l,τ] for τ in 1:t-building_times[s][l] if τ > 0))
+@constraint(model, [s_idx in eachindex(buildings), l in levels, t in 1:T],
+    n[s_idx,l,t] == sum(x[s_idx,l,τ] for τ in 1:t-Int(floor(building_times[buildings[s_idx]][l])) if τ > 0)
+)
 
 # 2. Hierarquia de níveis
-@constraint(model, [s in buildings, l in 2:20, t in 1:T],
-    sum(x[s,l,τ] for τ in 1:t) <= sum(x[s,l-1,τ] for τ in 1:t))
+@constraint(model, [s_idx in eachindex(buildings), l in 2:20, t in 1:T],
+    sum(x[s_idx,l,τ] for τ in 1:t) <= sum(x[s_idx,l-1,τ] for τ in 1:t))
 
 # 3. Consumo de cereal por segundo
 @constraint(model, [t in 1:T],
-    r["Crop",t] >= sum(n[s,l,t]*population[s][l] for s in buildings, l in levels)/3600)
+    r["Crop", t] >= (total_population[t] + q_t[t]) / 3600
+)
 
 # Restrição de treinamento
-@constraint(model, [t in 1:T, r in resources],
-    q_t[t] * soldier_cost[r] <= r[r,t])
+@constraint(model, [t in 1:T, res_name in resources],
+    q_t[t] * soldier_cost[res_name] <= r[res_name, t]
+)
 
 # Restrição mínima de soldados
-@constraint(model, q[T] >= 100)
+@constraint(model, q >= 100)
 
 # Armazém aumenta capacidade para madeira, barro, ferro
 warehouse_idx = findfirst(==("Warehouse"), buildings)
@@ -612,14 +633,14 @@ granary_idx = findfirst(==("Granary"), buildings)
 for t in 1:T
     @constraint(model, sum(
         x[s,l,τ] for s in eachindex(buildings), l in levels,
-        τ in max(1, t - building_times[buildings[s]][l] + 1):t
+        τ in max(1, t - Int(floor(building_times[buildings[s]][l])) + 1):t
     ) <= 3)
 end
 
 # Função objetivo
 @objective(model, Max, sum(
-    n[s,l,T]*population[s][l] 
-    for s in buildings, l in levels
+    n[s_idx, l, T] * population[buildings[s_idx]][l] 
+    for s_idx in eachindex(buildings), l in levels
 ))
 
 # Resolver o modelo
