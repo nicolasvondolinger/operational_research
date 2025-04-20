@@ -2,7 +2,13 @@ using JuMP, Gurobi
 
 model = Model(Gurobi.Optimizer)
 
-T = 300  # Horizonte de 72h em segundos
+set_optimizer_attribute(model, "Presolve", 1)  # Desativa pré-solução
+set_optimizer_attribute(model, "Heuristics", 0) 
+set_optimizer_attribute(model, "MIPFocus", 1)  
+set_optimizer_attribute(model, "MIPGap", 0.05) 
+set_optimizer_attribute(model, "TimeLimit", 600)
+
+T = 259200  # Horizonte de 72h em segundos
 
 levels = 1:20 
 
