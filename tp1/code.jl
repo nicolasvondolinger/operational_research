@@ -2,12 +2,6 @@ using JuMP, Gurobi
 
 model = Model(Gurobi.Optimizer)
 
-set_optimizer_attribute(model, "Presolve", 1)  # Desativa pré-solução
-set_optimizer_attribute(model, "Heuristics", 0) 
-set_optimizer_attribute(model, "MIPFocus", 1)  
-set_optimizer_attribute(model, "MIPGap", 0.05) 
-set_optimizer_attribute(model, "TimeLimit", 600)
-
 T = 259200  # Horizonte de 72h em segundos
 
 levels = 1:20 
@@ -462,22 +456,20 @@ for lvl in 1:20
 end
 building_requirements["Rally Point"] = Dict()
 
-# Resource production and consumption
-for t in 2:T, res_name in resources  # Iterar diretamente pelos nomes dos recursos
+# Produção de recursos e consumo
+for t in 2:T, res_name in resources
     building_name = building_for_resource(res_name)
     s = findfirst(==(building_name), buildings)
     
-    # Resource production (only from resource buildings)
     production = if building_name ∈ resource_buildings
         sum(
-            n[s, l, t-1] * resource_production[building_name][l] / 3600  # Production per second
+            n[s, l, t-1] * resource_production[building_name][l] / 3600
             for l in 1:20
         )
     else
         0
     end
     
-    # Resource consumption (building costs + soldier training)
     consumption = sum(
         x[s_b, l, t] * resource_required[buildings[s_b], l][res_name]
         for s_b in eachindex(buildings), l in 1:20
@@ -486,7 +478,7 @@ for t in 2:T, res_name in resources  # Iterar diretamente pelos nomes dos recurs
     @constraint(model, r[res_name, t] == r[res_name, t-1] + production - consumption)
 end
 
-# Consumo de Crop - versão correta
+# Consumo de Crop
 @constraint(model, [t in 1:T],
     r["Crop", t] >= (total_population[t] + q_t[t]) / 3600
 )
@@ -511,7 +503,7 @@ building_times = Dict(
     for (s, times) in building_base_times
 )
 
-# Custo para treinar um Legionário (Wood, Clay, Iron, Crop)
+# Custo para treinar um Legionário
 soldier_cost = Dict(
     "Wood" => 120,
     "Clay" => 100, 
@@ -564,18 +556,17 @@ for s in eachindex(buildings), l in 1:20, t in 1:T
 end
 
 # Requisitos de construção (campos de recurso) 
-for t in 1:T, resource_name in resources  # Itera diretamente pelos nomes dos recursos
+for t in 1:T, resource_name in resources 
     @constraint(model, 
         sum(
             x[s, l, t] * resource_required[buildings[s], l][resource_name] 
             for s in eachindex(buildings), l in 1:20
-        ) <= r[resource_name, t]  # Acessa usando o nome do recurso diretamente
+        ) <= r[resource_name, t] 
     )
 end
 
-# Tempo de construção - versão corrigida
+# Tempo de construção
 for s in eachindex(buildings), l in 1:20, t in 1:T
-    # Converta o tempo para Int antes de usar como índice
     build_time = Int(ceil(building_times[buildings[s]][l]))
     @constraint(model, 
         n[s,l,t] >= sum(x[s,l,τ] for τ in 1:t-build_time if τ > 0)
@@ -593,22 +584,22 @@ end
         r_name in resources
     ) <= 
     sum(
-        r[r_name, t]  # Acessa diretamente pelo nome do recurso
+        r[r_name, t]
         for r_name in resources, 
         t in 1:T
     )
 )
 
-# 1. Restrição de completude de construção
+# Restrição de completude de construção
 @constraint(model, [s_idx in eachindex(buildings), l in levels, t in 1:T],
     n[s_idx,l,t] == sum(x[s_idx,l,τ] for τ in 1:t-Int(floor(building_times[buildings[s_idx]][l])) if τ > 0)
 )
 
-# 2. Hierarquia de níveis
+# Hierarquia de níveis
 @constraint(model, [s_idx in eachindex(buildings), l in 2:20, t in 1:T],
     sum(x[s_idx,l,τ] for τ in 1:t) <= sum(x[s_idx,l-1,τ] for τ in 1:t))
 
-# 3. Consumo de cereal por segundo
+# Consumo de cereal por segundo
 @constraint(model, [t in 1:T],
     r["Crop", t] >= (total_population[t] + q_t[t]) / 3600
 )
@@ -621,7 +612,7 @@ end
 # Restrição mínima de soldados
 @constraint(model, q >= 100)
 
-# Armazém aumenta capacidade para madeira, barro, ferro
+# Armazém aumenta capacidade para madeira, barro e ferro
 warehouse_idx = findfirst(==("Warehouse"), buildings)
 @constraint(model, [t in 1:T],
     w["Wood",t] == 800 + 800*sum(n[warehouse_idx,l,t] for l in levels))
