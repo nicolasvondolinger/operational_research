@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <iomanip>
 #include <cmath>
 
@@ -177,17 +178,29 @@ double solveLP() {
     return D[rows][m+1];
 }
 
-void solve() { _
-    cin >> n >> m; c = Vector<double>(m, 0.0);
+int main(int argc, char* argv[]) { _
 
-    //A_ineq.clear(); b_ineq.clear(); sol.clear();
+    if (argc != 3) {
+        cerr << "Uso: ./codigo entrada.txt saida.txt\n";
+        return 1;
+    }
 
-    for (int j = 0; j < m; ++j) cin >> c[j];
+    ifstream entrada(argv[1]);
+    ofstream saida(argv[2]);
+
+    if (!entrada.is_open() || !saida.is_open()) {
+        cerr << "Erro ao abrir arquivos.\n";
+        return 1;
+    }
+
+    entrada >> n >> m; c = Vector<double>(m, 0.0);
+
+    for (int j = 0; j < m; ++j) entrada >> c[j];
     for (int i = 0; i < n; ++i) {
         Vector<double> a(m, 0.0);
         double bi;
-        for (int j = 0; j < m; ++j) cin >> a[j];
-        cin >> bi;
+        for (int j = 0; j < m; ++j) entrada >> a[j];
+        entrada >> bi;
         A_ineq.pb(a); b_ineq.pb(bi);
 
         for (int j = 0; j < m; ++j) a[j] = -a[j];
@@ -196,15 +209,14 @@ void solve() { _
 
     double val = solveLP();
 
-    if (std::isnan(val)) cout << "inviavel" << endl;
-    else if (val > INF/2) cout << "ilimitada" << endl;
+    if (std::isnan(val)) saida << "inviavel" << endl;
+    else if (val > INF/2) saida << "ilimitada" << endl;
     else {
-        cout << "otima" << endl;
-        cout << formatDouble(val) << endl;
+        saida << "otima" << endl;
+        saida << formatDouble(val) << endl;
     }
-}
 
-int main() {
-    solve();
+    entrada.close(); saida.close();
+
     return 0;
 }
